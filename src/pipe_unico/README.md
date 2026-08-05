@@ -34,3 +34,15 @@ tail -f ~/buckets/b1/exp/cola.log
   próxima corrida.
 - El `nohup ... &` hace que siga corriendo aunque cierres el browser o se caiga la
   conexión. Lo único que la corta es que Google apague la máquina.
+
+### Una cosa por vez
+
+`cola.py` toma un candado en `exp/_corridas/cola.lock` y avisa si hay poca memoria
+libre. **No corras el notebook a mano y la cola al mismo tiempo**: dos procesos con el
+dataset entero no entran en 64 GB, y como la VM tiene swap no muere ninguno — los dos
+siguen vivos avanzando a paso de tortuga, que se nota recién horas después.
+
+Antes de lanzar la cola, cerrá el kernel del notebook con **Kernel → Shut Down Kernel**.
+
+Si Google mata la máquina, el candado queda huérfano; se borra con
+`rm ~/buckets/b1/exp/_corridas/cola.lock` o se ignora con `--forzar-candado`.

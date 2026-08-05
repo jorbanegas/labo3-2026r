@@ -71,6 +71,53 @@ COLA = [
 
 
 # ══════════════════════════════════════════════════════════════════════════
+CANDADO = L.RUTA_EXP / "_corridas" / "cola.lock"
+
+
+def memoria_libre_gb() -> float:
+    """GB disponibles segun /proc/meminfo. -1 si no se puede leer (no-Linux)."""
+    try:
+        for l in open("/proc/meminfo"):
+            if l.startswith("MemAvailable:"):
+                return int(l.split()[1]) / 1024**2
+    except OSError:
+        pass
+    return -1.0
+
+
+def tomar_candado(forzar: bool = False) -> None:
+    """Impide dos colas a la vez, o una cola mientras corre el notebook a mano.
+
+    Dos procesos cargando el dataset completo no entran en 64 GB. El sistema no mata
+    a ninguno porque hay swap: los dos siguen vivos avanzando a paso de tortuga, que
+    es peor que un error porque no se nota hasta horas despues.
+    """
+    CANDADO.parent.mkdir(parents=True, exist_ok=True)
+    if CANDADO.exists() and not forzar:
+        try:
+            info = json.load(open(CANDADO, encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            info = {}
+        print(f"Ya hay una cola corriendo (o quedo un candado viejo):\n"
+              f"   {info}\n\n"
+              f"Si Google mato esa maquina, el candado quedo huerfano y se borra con:\n"
+              f"   rm {CANDADO}\n"
+              f"o se ignora con:  python cola.py --forzar-candado")
+        sys.exit(1)
+
+    libre = memoria_libre_gb()
+    if libre >= 0:
+        print(f"Memoria disponible: {libre:.1f} GB")
+        if libre < 20:
+            print("[AVISO] Menos de 20 GB libres. Si tenes el notebook abierto con su\n"
+                  "        kernel vivo, cerralo (Kernel -> Shut Down) antes de seguir:\n"
+                  "        dos procesos con el dataset entero no entran y todo se va a swap.")
+
+    import socket
+    L.escribir_json({"pid": __import__("os").getpid(), "host": socket.gethostname(),
+                     "desde": datetime.now().isoformat(timespec="seconds")}, CANDADO)
+
+
 def cargar_registro() -> dict:
     if REGISTRO.exists():
         try:
@@ -121,6 +168,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--listar", action="store_true", help="solo mostrar el estado")
     ap.add_argument("--rehacer", action="store_true", help="ignorar el registro")
+    ap.add_argument("--forzar-candado", dest="forzar_candado", action="store_true",
+                    help="correr aunque exista el candado de otra cola")
     args = ap.parse_args()
 
     reg = {} if args.rehacer else cargar_registro()
@@ -136,6 +185,7 @@ def main() -> None:
                   f"val {wv if wv is None else f'{wv:.5f}'}   {n[:70]}")
         return
 
+    tomar_candado(args.forzar_candado)
     L.limpiar_tmp()
     pendientes = [(n, o) for n, o in COLA if not reg.get(n, {}).get("ok")]
     print(f"Cola: {len(COLA)} experimentos, {len(pendientes)} pendientes\n")
