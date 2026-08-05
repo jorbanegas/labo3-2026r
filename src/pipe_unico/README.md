@@ -18,13 +18,19 @@ cambiarla crea un experimento nuevo y volver atrás reusa los checkpoints viejos
 
 ## Correr varios experimentos sin supervisión
 
- ejecuta una lista de configuraciones una tras otra con papermill, cambiando
-solo las palancas indicadas en cada una.
+`cola.py` ejecuta una lista de configuraciones una tras otra con papermill, cambiando
+solo las palancas indicadas en cada una. La lista se edita al principio del archivo.
 
+```bash
+pip install -q papermill
+nohup python cola.py > ~/buckets/b1/exp/cola.log 2>&1 &
+tail -f ~/buckets/b1/exp/cola.log
+```
 
-
--  muestra qué hay hecho, qué falta y el ranking por WAPE.
+- `python cola.py --listar` muestra qué hay hecho, qué falta y el ranking por WAPE.
 - Si Google mata la spot, se relanza el mismo comando: los experimentos terminados se
   saltean y el que estaba a medias retoma desde su último checkpoint.
 - Un experimento que falla queda registrado y **no frena la cola**; se reintenta en la
   próxima corrida.
+- El `nohup ... &` hace que siga corriendo aunque cierres el browser o se caiga la
+  conexión. Lo único que la corta es que Google apague la máquina.
