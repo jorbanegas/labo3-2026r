@@ -65,6 +65,15 @@ COLA = [
     #   matriz interna de LightGBM. Murio por OOM dos veces. Para medir el efecto
     #   de "mas clientes" usa clientes_1de2, que da la misma direccion con la mitad.
     ("clientes_1de2",       {'clientes_n': 2}),
+
+    # Los 50 clientes de mayor volumen. Son DOS claves pero una sola palanca
+    # conceptual: la poblacion de entrenamiento.
+    #
+    # OJO con como interpretar el resultado: esto no es un muestreo, es un CAMBIO DE
+    # POBLACION. El modelo entrena solo con clientes grandes pero se lo evalua contra
+    # todos, incluidos los chicos que nunca vio. Puede ganar (si Kaggle mide toneladas,
+    # los grandes mueven la aguja) o perder feo. Por eso hay que medirlo aislado.
+    ("clientes_top50",      {'filtro_clientes': 'top', 'clientes_n': 50}),
     ("solo_producto",       {'agrupamiento': 'B'}),
     ("solo_target_prods",   {'solo_target': True}),
     ("lags_12",             {'max_lags': 12}),
