@@ -60,7 +60,10 @@ COLA = [
     ("target_delta",        {'target': 'clase_tn_delta'}),
     ("target_nivel",        {'target': 'clase_tn'}),
     ("norm_zscore",         {'metodo_norm': 'zscore'}),
-    ("clientes_todos",      {'filtro_clientes': 'todos'}),
+    # ("clientes_todos",  {'filtro_clientes': 'todos'}),   <- NO ENTRA EN 64 GB.
+    #   Son 10M de filas: 25 GB de df_pd + ~19 del slice de train + ~10 de la
+    #   matriz interna de LightGBM. Murio por OOM dos veces. Para medir el efecto
+    #   de "mas clientes" usa clientes_1de2, que da la misma direccion con la mitad.
     ("clientes_1de2",       {'clientes_n': 2}),
     ("solo_producto",       {'agrupamiento': 'B'}),
     ("solo_target_prods",   {'solo_target': True}),
