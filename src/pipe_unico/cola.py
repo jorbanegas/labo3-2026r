@@ -81,28 +81,48 @@ BASE = {
     'meses_test':  [201910],
 }
 
-# La tanda anterior dejo una sola direccion con senial consistente: SIMPLIFICAR.
-# lags_12 (-0.18 vs base) y grpProducto (-0.16) fueron las dos unicas mejoras
-# grandes, y las dos reducen capacidad del modelo. El resto quedo dentro del ruido:
-# clientes_1de2 (mas datos) y clientes_top50 (menos datos y sesgados) mejoraron LOS
-# DOS respecto de base, lo cual solo puede ser ruido.
+# ── QUE DIJERON LOS RESULTADOS DE KAGGLE ─────────────────────────────────────
+# Las metricas internas NO predicen el puntaje de Kaggle. Con 6 experimentos subidos:
+#     Spearman  wape_test vs kaggle : -0.314   (negativa!)
+#     Spearman  wape_val  vs kaggle : +0.029   (nula)
+# lags_12, que tenia el MEJOR wape_test (0.367), quedo anteultimo en Kaggle (0.299).
 #
-# Asi que esta cola explora esa direccion a fondo, en vez de barrer palancas sueltas.
+# La unica relacion ordenada en los datos es la cantidad de clientes:
+#     1 de cada 2 -> 0.267    1 de cada 4 -> 0.294    top 50 -> 0.331
+# Monotona en tres puntos, y en direccion contraria a lo que sugeria el test interno:
+# MAS DATOS, no menos.
+#
+# Por eso esta cola empuja hacia mas clientes. El problema es la memoria: 'todos' con
+# 24 lags necesita 64 GB. Las dos formas de hacerlo entrar son bajar las columnas
+# (lags_12 -> ~37 GB) o bajar las filas (solo_target -> ~40 GB).
+#
+# OJO al elegir el ganador de esta tanda: NO uses wape_test. Subi a Kaggle y decidi
+# con ese numero, que es el unico que mide lo que se evalua.
 COLA = [
-    ("base_val6",           {}),
-    ("lags_12",             {'max_lags': 12}),
-    ("lags_6",              {'max_lags': 6}),
-    ("producto",            {'agrupamiento': 'B'}),
-    ("producto_lags12",     {'agrupamiento': 'B', 'max_lags': 12}),
-    ("producto_lags6",      {'agrupamiento': 'B', 'max_lags': 6}),
-    ("reg_fuerte",          {'regularizacion': 'fuerte'}),
-    ("lags12_reg_fuerte",   {'max_lags': 12, 'regularizacion': 'fuerte'}),
+    # El mejor de Kaggle hasta ahora, con la validacion nueva. Es la referencia.
+    ("cli1de2",              {'clientes_n': 2}),
 
-    # Reduccion de varianza pura: 3 modelos con distinta semilla, promediados. No
-    # cambia el WAPE de validacion (la busqueda es la misma), pero suele mejorar la
-    # entrega, que es lo que mide Kaggle.
-    ("lags12_ensemble3",    {'max_lags': 12,
-                             'semillas_ensemble': [102191, 314159, 271828]}),
+    # Empujar la direccion ganadora hasta donde la memoria permita.
+    ("todos_lags12",         {'filtro_clientes': 'todos', 'max_lags': 12}),
+    ("todos_solotarget",     {'filtro_clientes': 'todos', 'solo_target': True}),
+    ("cli1de2_solotarget",   {'clientes_n': 2, 'solo_target': True}),
+
+    # Reduccion de varianza sobre el mejor conocido. No cambia la busqueda, promedia
+    # 3 modelos con distinta semilla. Es la mejora mas confiable que hay disponible.
+    ("cli1de2_ensemble3",    {'clientes_n': 2,
+                              'semillas_ensemble': [102191, 314159, 271828]}),
+
+    # Mas capacidad, ahora que sabemos que simplificar no ayudaba.
+    ("cli1de2_arb1000",      {'clientes_n': 2, 'techo_arboles': 1000}),
+
+    # La regularizacion nunca llego a probarse (colisionaba de nombre con base).
+    ("cli1de2_reg_fuerte",   {'clientes_n': 2, 'regularizacion': 'fuerte'}),
+
+    # Nivel producto: quedo segundo y tercero en Kaggle con dos configuraciones
+    # distintas, asi que la granularidad gruesa tiene algo. Y es baratisima de correr.
+    ("producto",             {'agrupamiento': 'B'}),
+    ("producto_ensemble3",   {'agrupamiento': 'B',
+                              'semillas_ensemble': [102191, 314159, 271828]}),
 ]
 
 
