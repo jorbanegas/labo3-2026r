@@ -128,6 +128,25 @@ def main() -> None:
     salida = (mezcla.clip(lower=0).rename("tn").reset_index()
                     .sort_values("product_id").reset_index(drop=True))
 
+    # ── La entrega tiene que ser EXACTAMENTE la lista oficial ───────────────
+    # Al concatenar entregas se toma la UNION de los product_id. Si alguna es vieja
+    # (anterior al arreglo de las 780 filas) trae productos de mas, y Kaggle rechaza
+    # el archivo con "Submission must have N rows". Por eso se reindexa aca tambien.
+    oficial = pd.read_csv(L.DIR_RAW / "product_id_apredecir201912.txt", sep="\t")
+    oficial = oficial[["product_id"]].drop_duplicates()
+    antes = len(salida)
+    salida = oficial.merge(salida, on="product_id", how="left")
+    sobran, faltan = antes - len(oficial), int(salida["tn"].isna().sum())
+    if sobran > 0:
+        print(f"\n{sobran} producto(s) predicho(s) que NO estan en la lista oficial: se descartan")
+    if faltan:
+        print(f"{faltan} producto(s) de la lista sin prediccion en ninguna entrega: van en 0")
+        salida["tn"] = salida["tn"].fillna(0.0)
+    salida = salida.sort_values("product_id").reset_index(drop=True)
+    if len(salida) != len(oficial):
+        raise SystemExit(f"La mezcla quedo con {len(salida)} filas y la lista oficial "
+                         f"tiene {len(oficial)}. Kaggle la rechazaria.")
+
     # Correlacion entre modelos: si estan todos por encima de 0.99, son casi el mismo
     # y la mezcla no va a aportar mucho. Lo que hace ganar una mezcla es la diversidad.
     corr = tabla.corr()
