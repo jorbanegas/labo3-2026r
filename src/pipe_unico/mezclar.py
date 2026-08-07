@@ -77,6 +77,14 @@ def elegir(disponibles: dict, patrones: list) -> list:
         m = [n for n in disponibles if p.lower() in n.lower()]
         if not m:
             raise SystemExit(f"'{p}' no casa con ningun experimento. Corre --listar.")
+        # Un nombre completo gana sobre las coincidencias parciales. Sin esto, un
+        # experimento cuyo nombre es prefijo de otro (linreg_..._201812 contra
+        # linreg_..._201812-201712) seria imposible de elegir: no hay ningun
+        # fragmento que identifique al corto sin casar tambien con el largo.
+        exactos = [n for n in m if n.lower() == p.lower()]
+        if exactos:
+            elegidos.append(exactos[0])
+            continue
         if len(m) > 1:
             print(f"'{p}' casa con {len(m)}:")
             for x in m:
