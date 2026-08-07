@@ -214,6 +214,14 @@ pico antes de materializar y corta con `MemoryError`, que la cola sí atrapa.
 muere ninguno: los dos siguen vivos avanzando a paso de tortuga. `cola.py` toma un
 candado en `exp/_corridas/cola.lock`.
 
+**El nombre del experimento no incluye `semillas_ensemble`.** `EXPERIMENTO` arrastra
+granularidad, target, objetivo, val/test, clientes, árboles y regularización — pero no
+las semillas. Una corrida "con ensemble" cae en la **misma carpeta** que la simple,
+encuentra su `pred_infer.parquet` ya escrito y se saltea la etapa: devuelve una copia
+de la corrida sin ensemble, sin avisar. Es el mismo bug que tuvo `regularizacion`.
+Para probar el ensemble hay que forzar (`'forzar': {'final'}`) asumiendo que pisa el
+resultado anterior, o agregarle un tag al nombre.
+
 **El log de la cola no muestra progreso de tqdm.** papermill captura la salida de a
 bloques. Por eso Optuna imprime una línea por trial en vez de una barra.
 
@@ -229,16 +237,27 @@ reindexan contra `product_id_apredecir201912.txt`.
 
 ## 7. Pendiente
 
-1. **`regression_l1` en el pipeline grande.** En las palancas de `pipe_unico.ipynb`:
-   `'solo_target': True` + `'objective_lgbm': 'regression_l1'`. Si `tgtFilter` baja de
-   0.264, rehacer la mezcla ponderada y probablemente perforar el 0.229. **Es lo más
-   prometedor que queda.**
-2. La cola con validación de 6 meses (`cola.py`) quedó armada y sin correr. Dado el
-   hallazgo 5.1, su valor es dudoso salvo que se combine con L1.
-3. `mezcla_trio_l1.csv` (linreg 6 + lgbmprod_l1 2 + tgtFilter 1) quedó generada sin subir.
+1. **Correr la cola de `regression_l1`.** `cola.py` quedó reescrita con tres
+   experimentos, cada uno una réplica de una corrida con puntaje conocido cambiando
+   solo la pérdida: `tgtFilter_l1` (contra 0.264), `cli1de2_l1` (contra 0.267) y
+   `producto_l1`. Reusan los parquets de preprocesamiento y FE, así que arrancan
+   directo en Optuna. **Es lo más prometedor que queda.**
+
+   La `BASE` volvió al split de los defaults del notebook (val `201907-201908`). La
+   validación de 6 meses se sacó: se justificaba en que `wape_val` no predecía
+   `wape_test`, pero el hallazgo 5.1 mostró que `wape_test` tampoco predice Kaggle,
+   así que ese argumento se quedó sin evidencia — y moverla al mismo tiempo que la
+   pérdida haría imposible atribuir la mejora.
+2. `mezcla_trio_l1.csv` (linreg 6 + lgbmprod_l1 2 + tgtFilter 1) quedó generada sin subir.
+3. Si `tgtFilter_l1` baja de 0.264, **rehacer la mezcla ponderada** contra `linreg`
+   barriendo pesos 3:1 a 8:1, que es la meseta donde vive el 0.229.
 4. **Marcar la entrega final** con el checkbox *Select* de Kaggle antes del cierre.
    Recomendación: `mezcla_4a1` (o cualquiera de la meseta 3:1–8:1), no `linreg` sola,
    por el riesgo del hallazgo 5.6.
+
+Nota sobre `subir.py`: ordena los envíos por `wape_test`, que según el hallazgo 5.1
+es levemente peor que al azar. Mientras el límite diario no corte, el orden no cambia
+nada; si alguna vez corta, conviene subir a mano lo que importa primero.
 
 ---
 

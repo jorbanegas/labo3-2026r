@@ -62,68 +62,77 @@ BASE = {
     'n_trials': 40,
     'submit':   False,          # nunca subir automaticamente desde la cola
 
-    # ── VALIDACION ANCHA ────────────────────────────────────────────────────
-    # La tanda anterior mostro que wape_val no predecia wape_test: correlacion de
-    # Spearman -0.315, o sea que por ranking iba levemente AL REVES. Con 2 meses de
-    # validacion, Optuna optimizaba ruido y sus 40 trials valian lo mismo que 40
-    # tiros al azar.
+    # ── EL MISMO SPLIT QUE LAS CORRIDAS QUE YA TIENEN PUNTAJE DE KAGGLE ──────
+    # La version anterior de esta cola usaba validacion de 6 meses (train 201701-201901,
+    # val 201903-201908). El argumento era que wape_val no predecia wape_test, asi que
+    # 2 meses de val eran ruido y Optuna optimizaba nada.
     #
-    # Con 6 meses de val la senial es mucho mas estable. Los meses respetan el gap
-    # obligatorio del horizonte 2:
-    #     max(train) 201901 + 2 = 201903 <= min(val) 201903   OK
-    #     max(val)   201908 + 2 = 201910 <= min(test) 201910  OK
+    # Esa cola nunca se corrio, y mientras tanto llegaron los puntajes de Kaggle, que
+    # tumbaron el argumento: wape_test tampoco predice Kaggle (Spearman -0.13), asi que
+    # "wape_val no predice wape_test" dejo de ser evidencia de nada. No hay ningun
+    # motivo para creer que la validacion ancha da mejores puntajes; es una hipotesis
+    # sin sustento, y cara: cambia el nombre del experimento, o sea que no reusa ningun
+    # study ni checkpoint de Optuna ya corrido.
     #
-    # El test sigue siendo UN mes y no hay forma de agrandarlo: 201911 y 201912 son
-    # los meses de inferencia (los ultimos 2, con horizonte 2) y no pueden solaparse.
-    # Asi que wape_test sigue siendo ruidoso; el que mejora es el criterio de Optuna.
-    'meses_train': rango_meses(201701, 201901),
-    'meses_val':   rango_meses(201903, 201908),
+    # Y sobre todo: esta tanda existe para medir UNA cosa, el efecto de regression_l1.
+    # Si al mismo tiempo se mueve la validacion, un tgtFilter_l1 que salga 0.25 no dice
+    # si gano el L1 o el split nuevo, y ya no queda tiempo para desambiguar.
+    #
+    # Estos son los defaults del notebook, con los que se corrieron tgtFilter (0.264),
+    # cli1de2 (0.267) y todos los demas. Explicitos aca para que quede escrito que es
+    # una eleccion y no un olvido.
+    'meses_train': rango_meses(201701, 201905),
+    'meses_val':   [201907, 201908],
     'meses_test':  [201910],
 }
 
-# ── QUE DIJERON LOS RESULTADOS DE KAGGLE ─────────────────────────────────────
-# Las metricas internas NO predicen el puntaje de Kaggle. Con 6 experimentos subidos:
-#     Spearman  wape_test vs kaggle : -0.314   (negativa!)
-#     Spearman  wape_val  vs kaggle : +0.029   (nula)
-# lags_12, que tenia el MEJOR wape_test (0.367), quedo anteultimo en Kaggle (0.299).
+# ── POR QUE ESTA COLA ES SOLO regression_l1 ──────────────────────────────────
+# La metrica de la competencia es WAPE: error ABSOLUTO. Los 14 experimentos de este
+# pipeline se entrenaron con 'regression', que minimiza error CUADRATICO. Se estuvo
+# optimizando una cosa distinta de la que evalua Kaggle, en todas las corridas.
 #
-# La unica relacion ordenada en los datos es la cantidad de clientes:
-#     1 de cada 2 -> 0.267    1 de cada 4 -> 0.294    top 50 -> 0.331
-# Monotona en tres puntos, y en direccion contraria a lo que sugeria el test interno:
-# MAS DATOS, no menos.
+# La evidencia de que importa es directa: en lgbm_producto.py, cambiar el objetivo y
+# nada mas dio 0.275 -> 0.257, o sea 0.018. Es la mejora mas grande que produjo una
+# sola palanca en toda la sesion, y ninguna otra movia nada -- los 14 experimentos
+# quedaron amontonados entre 0.264 y 0.299 sin importar que se tocara. La hipotesis
+# es que ese amontonamiento ERA el techo de la perdida equivocada.
 #
-# Por eso esta cola empuja hacia mas clientes. El problema es la memoria: 'todos' con
-# 24 lags necesita 64 GB. Las dos formas de hacerlo entrar son bajar las columnas
-# (lags_12 -> ~37 GB) o bajar las filas (solo_target -> ~40 GB).
+# Cada linea de aca cambia UNA cosa respecto de una corrida que ya tiene puntaje de
+# Kaggle, y esa cosa es el objetivo. Asi el resultado es una resta limpia.
 #
-# OJO al elegir el ganador de esta tanda: NO uses wape_test. Subi a Kaggle y decidi
-# con ese numero, que es el unico que mide lo que se evalua.
+# Baratas: el nombre del experimento incluye objective_lgbm pero NO afecta a los
+# parquet de preprocesamiento ni de feature engineering, que son las dos etapas caras.
+# Estas corridas los reusan tal cual y arrancan directo en Optuna.
+#
+# OJO al elegir el ganador: NO uses wape_test (Spearman -0.13 contra Kaggle, va al
+# reves). Subi a Kaggle y decidi con ese numero, el unico que mide lo que se evalua.
 COLA = [
-    # El mejor de Kaggle hasta ahora, con la validacion nueva. Es la referencia.
-    ("cli1de2",              {'clientes_n': 2}),
+    # EL EXPERIMENTO. Replica exacta de tgtFilter (0.264, el mejor LightGBM del
+    # pipeline y el companero de mezcla del 0.229) cambiando solo la perdida. Si baja,
+    # rehacer la mezcla ponderada con linreg y deberia perforar el 0.229.
+    ("tgtFilter_l1",   {'solo_target': True, 'objective_lgbm': 'regression_l1'}),
 
-    # Empujar la direccion ganadora hasta donde la memoria permita.
-    ("todos_lags12",         {'filtro_clientes': 'todos', 'max_lags': 12}),
-    ("todos_solotarget",     {'filtro_clientes': 'todos', 'solo_target': True}),
-    ("cli1de2_solotarget",   {'clientes_n': 2, 'solo_target': True}),
+    # Segundo punto de medicion, sobre cli1de2 (0.267). Sirve para saber si L1 es una
+    # mejora general del pipeline o una casualidad de una configuracion. Con dos
+    # corridas apuntando igual, la conclusion aguanta; con una sola, no.
+    ("cli1de2_l1",     {'clientes_n': 2, 'objective_lgbm': 'regression_l1'}),
 
-    # Reduccion de varianza sobre el mejor conocido. No cambia la busqueda, promedia
-    # 3 modelos con distinta semilla. Es la mejora mas confiable que hay disponible.
-    ("cli1de2_ensemble3",    {'clientes_n': 2,
-                              'semillas_ensemble': [102191, 314159, 271828]}),
-
-    # Mas capacidad, ahora que sabemos que simplificar no ayudaba.
-    ("cli1de2_arb1000",      {'clientes_n': 2, 'techo_arboles': 1000}),
-
-    # La regularizacion nunca llego a probarse (colisionaba de nombre con base).
-    ("cli1de2_reg_fuerte",   {'clientes_n': 2, 'regularizacion': 'fuerte'}),
-
-    # Nivel producto: quedo segundo y tercero en Kaggle con dos configuraciones
-    # distintas, asi que la granularidad gruesa tiene algo. Y es baratisima de correr.
-    ("producto",             {'agrupamiento': 'B'}),
-    ("producto_ensemble3",   {'agrupamiento': 'B',
-                              'semillas_ensemble': [102191, 314159, 271828]}),
+    # Granularidad producto: la mas barata de todas y estructuralmente distinta de las
+    # dos de arriba, asi que es la mejor candidata a companera de mezcla diversa.
+    ("producto_l1",    {'agrupamiento': 'B', 'objective_lgbm': 'regression_l1'}),
 ]
+
+# ── LO QUE NO ESTA ACA Y POR QUE ─────────────────────────────────────────────
+# 'semillas_ensemble' NO entra en el nombre del experimento (ver la celda 3 del
+# notebook). Un "tgtFilter_l1_ensemble3" caeria en la MISMA carpeta que tgtFilter_l1,
+# encontraria su pred_infer.parquet ya escrito y se saltearia la etapa entera: daria
+# por resultado una copia del anterior, sin ensemble y sin avisar. Es exactamente el
+# bug que ya tuvo 'regularizacion'. Para probar el ensemble hay que correrlo a mano
+# con 'forzar': {'final'}, sabiendo que pisa el resultado de la corrida simple.
+#
+# Tampoco esta la validacion de 6 meses, ni mas capacidad, ni mas clientes: todo eso
+# es una palanca de segundo orden si la perdida esta equivocada. Primero se arregla
+# la perdida, despues se vuelve a mirar el resto con los numeros nuevos.
 
 
 # ══════════════════════════════════════════════════════════════════════════
