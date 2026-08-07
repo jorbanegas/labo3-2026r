@@ -32,15 +32,41 @@ import pandas as pd  # noqa: E402
 DIR_MEZCLAS = L.RUTA_EXP / "_mezclas"
 
 
-def entregas() -> dict:
+# Un WAPE por encima de esto no es un modelo malo, es un desborde numerico (zscore
+# sobre series casi constantes da ~1e9). Con --metodo mediana queda descartado por
+# votacion, pero con media UN SOLO modelo asi destruye la mezcla entera: la media de
+# los 14 dio 1.6e10 en Kaggle por culpa de ese unico experimento.
+WAPE_ABSURDO = 5.0
+
+
+def entregas(incluir_rotos: bool = False) -> dict:
     """{nombre_experimento: path del submission mas reciente}."""
-    out = {}
+    import json
+    out, descartados = {}, []
     for d in sorted(L.RUTA_EXP.iterdir()):
         if not d.is_dir() or d.name.startswith("_"):
             continue
         csvs = sorted(d.glob("submission_*.csv"))
-        if csvs:
-            out[d.name] = csvs[-1]
+        if not csvs:
+            continue
+        w = None
+        res = d / "resultado.json"
+        if res.exists():
+            try:
+                w = json.load(open(res, encoding="utf-8")).get("wape_test")
+            except json.JSONDecodeError:
+                pass
+        if w is not None and w > WAPE_ABSURDO and not incluir_rotos:
+            descartados.append((d.name, w))
+            continue
+        out[d.name] = csvs[-1]
+    if descartados:
+        print(f"[excluido] {len(descartados)} experimento(s) con wape_test absurdo "
+              f"(desborde numerico, no modelo malo):")
+        for n, w in descartados:
+            print(f"      {w:.3e}   {n[:64]}")
+        print("      Se incluyen con --incluir-rotos, pero con --metodo media "
+              "arruinan la mezcla.\n")
     return out
 
 
@@ -70,9 +96,11 @@ def main() -> None:
     ap.add_argument("--pesos", default=None,
                     help="pesos separados por coma, uno por experimento (solo con media)")
     ap.add_argument("--nombre", default=None, help="nombre del archivo de salida")
+    ap.add_argument("--incluir-rotos", dest="rotos", action="store_true",
+                    help="no excluir los experimentos con wape absurdo")
     args = ap.parse_args()
 
-    disp = entregas()
+    disp = entregas(args.rotos)
     if not disp:
         raise SystemExit(f"No hay ningun submission_*.csv en {L.RUTA_EXP}")
 
