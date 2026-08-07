@@ -50,35 +50,59 @@ REGISTRO = L.RUTA_EXP / "_corridas" / "registro.json"
 #
 # El 'nombre' es solo para el log y el registro; el experimento real se identifica
 # por su carpeta en exp/, que sale de las palancas.
+
+def rango_meses(desde: int, hasta: int) -> list:
+    """Periodos AAAAMM consecutivos: rango_meses(201701, 201703) -> [201701, 201702, 201703].
+    Misma definicion que en el notebook; hace falta aca porque BASE la usa."""
+    a, b = (desde // 100) * 12 + desde % 100, (hasta // 100) * 12 + hasta % 100
+    return [((m - 1) // 12) * 100 + ((m - 1) % 12) + 1 for m in range(a, b + 1)]
+
+
 BASE = {
     'n_trials': 40,
     'submit':   False,          # nunca subir automaticamente desde la cola
+
+    # ── VALIDACION ANCHA ────────────────────────────────────────────────────
+    # La tanda anterior mostro que wape_val no predecia wape_test: correlacion de
+    # Spearman -0.315, o sea que por ranking iba levemente AL REVES. Con 2 meses de
+    # validacion, Optuna optimizaba ruido y sus 40 trials valian lo mismo que 40
+    # tiros al azar.
+    #
+    # Con 6 meses de val la senial es mucho mas estable. Los meses respetan el gap
+    # obligatorio del horizonte 2:
+    #     max(train) 201901 + 2 = 201903 <= min(val) 201903   OK
+    #     max(val)   201908 + 2 = 201910 <= min(test) 201910  OK
+    #
+    # El test sigue siendo UN mes y no hay forma de agrandarlo: 201911 y 201912 son
+    # los meses de inferencia (los ultimos 2, con horizonte 2) y no pueden solaparse.
+    # Asi que wape_test sigue siendo ruidoso; el que mejora es el criterio de Optuna.
+    'meses_train': rango_meses(201701, 201901),
+    'meses_val':   rango_meses(201903, 201908),
+    'meses_test':  [201910],
 }
 
+# La tanda anterior dejo una sola direccion con senial consistente: SIMPLIFICAR.
+# lags_12 (-0.18 vs base) y grpProducto (-0.16) fueron las dos unicas mejoras
+# grandes, y las dos reducen capacidad del modelo. El resto quedo dentro del ruido:
+# clientes_1de2 (mas datos) y clientes_top50 (menos datos y sesgados) mejoraron LOS
+# DOS respecto de base, lo cual solo puede ser ruido.
+#
+# Asi que esta cola explora esa direccion a fondo, en vez de barrer palancas sueltas.
 COLA = [
-    ("base",                {}),
-    ("target_delta",        {'target': 'clase_tn_delta'}),
-    ("target_nivel",        {'target': 'clase_tn'}),
-    ("norm_zscore",         {'metodo_norm': 'zscore'}),
-    # ("clientes_todos",  {'filtro_clientes': 'todos'}),   <- NO ENTRA EN 64 GB.
-    #   Son 10M de filas: 25 GB de df_pd + ~19 del slice de train + ~10 de la
-    #   matriz interna de LightGBM. Murio por OOM dos veces. Para medir el efecto
-    #   de "mas clientes" usa clientes_1de2, que da la misma direccion con la mitad.
-    ("clientes_1de2",       {'clientes_n': 2}),
-
-    # Los 50 clientes de mayor volumen. Son DOS claves pero una sola palanca
-    # conceptual: la poblacion de entrenamiento.
-    #
-    # OJO con como interpretar el resultado: esto no es un muestreo, es un CAMBIO DE
-    # POBLACION. El modelo entrena solo con clientes grandes pero se lo evalua contra
-    # todos, incluidos los chicos que nunca vio. Puede ganar (si Kaggle mide toneladas,
-    # los grandes mueven la aguja) o perder feo. Por eso hay que medirlo aislado.
-    ("clientes_top50",      {'filtro_clientes': 'top', 'clientes_n': 50}),
-    ("solo_producto",       {'agrupamiento': 'B'}),
-    ("solo_target_prods",   {'solo_target': True}),
+    ("base_val6",           {}),
     ("lags_12",             {'max_lags': 12}),
-    ("regularizacion_fuerte", {'regularizacion': 'fuerte'}),
-    ("arboles_1000",        {'techo_arboles': 1000}),
+    ("lags_6",              {'max_lags': 6}),
+    ("producto",            {'agrupamiento': 'B'}),
+    ("producto_lags12",     {'agrupamiento': 'B', 'max_lags': 12}),
+    ("producto_lags6",      {'agrupamiento': 'B', 'max_lags': 6}),
+    ("reg_fuerte",          {'regularizacion': 'fuerte'}),
+    ("lags12_reg_fuerte",   {'max_lags': 12, 'regularizacion': 'fuerte'}),
+
+    # Reduccion de varianza pura: 3 modelos con distinta semilla, promediados. No
+    # cambia el WAPE de validacion (la busqueda es la misma), pero suele mejorar la
+    # entrega, que es lo que mide Kaggle.
+    ("lags12_ensemble3",    {'max_lags': 12,
+                             'semillas_ensemble': [102191, 314159, 271828]}),
 ]
 
 
