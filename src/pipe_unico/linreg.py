@@ -64,8 +64,13 @@ PRODUCTOS_MAGICOS = [
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--productos", choices=["magicos", "todos"], default="magicos",
-                    help="entrenar con los 182 elegidos a mano o con los 780")
+    ap.add_argument("--productos",
+                    choices=["magicos", "todos", "topvol", "estables"],
+                    default="magicos",
+                    help="que productos entran al ajuste: los 182 a mano, todos, "
+                         "los de mayor volumen, o los de serie mas regular")
+    ap.add_argument("--n", type=int, default=182,
+                    help="cuantos productos con --productos topvol o estables")
     ap.add_argument("--meses", default="201812",
                     help="periodos de entrenamiento separados por coma (origenes)")
     ap.add_argument("--lags", type=int, default=12, help="cuantos lags de tn usar")
@@ -97,9 +102,18 @@ def main() -> None:
     campos = [f"tn_{k}" for k in range(args.lags)]
 
     # ── 3. Entrenamiento ────────────────────────────────────────────────────
+    # ── Que productos entran al ajuste ──────────────────────────────────────
+    # Vale 0.04 en Kaggle: los 182 elegidos a mano dan 0.231 y los 780 dan 0.271.
+    # La razon probable es que el WAPE es suma|error|/suma|real|, asi que lo dominan
+    # los productos de mayor volumen; y OLS es sensible a outliers, de modo que meter
+    # series erraticas al ajuste corre los coeficientes en favor de productos que casi
+    # no pesan en el resultado. 'topvol' y 'estables' son versiones explicitas de esa
+    # misma idea, sin depender de una lista sin criterio documentado.
+    elegidos = seleccionar_productos(ventas, args.productos, args.n, args.origen)
     filtro = pl.col("periodo").is_in(meses_tr)
-    if args.productos == "magicos":
-        filtro = filtro & pl.col("product_id").is_in(PRODUCTOS_MAGICOS)
+    if elegidos is not None:
+        filtro = filtro & pl.col("product_id").is_in(elegidos)
+        print(f"Productos para el ajuste: {len(elegidos)} ('{args.productos}')")
     dtrain = tabla.filter(filtro).drop_nulls(campos + ["clase"])
     if dtrain.is_empty():
         raise SystemExit(f"Sin filas de entrenamiento para {meses_tr}. "
@@ -135,7 +149,8 @@ def main() -> None:
     if final.height != oficial.height:
         raise SystemExit(f"{final.height} filas contra {oficial.height} oficiales")
 
-    nombre = args.nombre or (f"linreg_{args.productos}_{args.lags}lags_"
+    _suf = f"{args.n}" if args.productos in ("topvol","estables") else ""
+    nombre = args.nombre or (f"linreg_{args.productos}{_suf}_{args.lags}lags_"
                              + "-".join(str(m) for m in meses_tr))
     dst = L.RUTA_EXP / nombre
     dst.mkdir(parents=True, exist_ok=True)
@@ -146,6 +161,36 @@ def main() -> None:
     print(f"Guardado: {path}")
     print("\nPara subirlo:\n")
     print(f"kaggle competitions submit -c labo-iii-2026-rosario -f {path} -m \"{nombre}\"")
+
+
+def seleccionar_productos(ventas, criterio: str, n: int, origen: int):
+    """product_ids que entran al ajuste. None = todos."""
+    if criterio == "todos":
+        return None
+    if criterio == "magicos":
+        return PRODUCTOS_MAGICOS
+
+    # Los ultimos 12 meses hasta el origen: es la ventana que el modelo va a usar.
+    ini = (origen // 100 - 1) * 100 + origen % 100 + 1
+    v = ventas.filter(pl.col("periodo").is_between(ini, origen))
+
+    if criterio == "topvol":
+        # Los n de mayor volumen. Son los que dominan el denominador del WAPE, asi que
+        # ajustar sobre ellos alinea el modelo con lo que la metrica premia.
+        return (v.group_by("product_id").agg(pl.col("tn").sum().alias("v"))
+                 .sort("v", descending=True).head(n)["product_id"].to_list())
+
+    # 'estables': serie completa y de variacion moderada. El coeficiente de variacion
+    # (desvio/media) mide lo erratico de la serie; los mas erraticos son los que
+    # ensucian un ajuste por minimos cuadrados.
+    est = (v.group_by("product_id")
+            .agg(pl.len().alias("meses"),
+                 pl.col("tn").mean().alias("m"),
+                 pl.col("tn").std().alias("s"))
+            .filter((pl.col("meses") == 12) & (pl.col("m") > 0))
+            .with_columns((pl.col("s") / pl.col("m")).alias("cv"))
+            .sort("cv"))
+    return est.head(n)["product_id"].to_list()
 
 
 def tabla_lags(ventas: "pl.DataFrame", lags: list, horizonte: int) -> "pl.DataFrame":
