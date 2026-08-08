@@ -108,6 +108,28 @@ BASE = {
 # OJO al elegir el ganador: NO uses wape_test (Spearman -0.13 contra Kaggle, va al
 # reves). Subi a Kaggle y decidi con ese numero, el unico que mide lo que se evalua.
 COLA = [
+    # ── EL MES DEL ANIO ─────────────────────────────────────────────────────
+    # La diferencia estructural mas grande entre linreg (0.231) y este pipeline
+    # (0.264) esta escrita en el docstring de linreg.py: linreg entrena con UNA fila
+    # por producto, del periodo 201812, o sea que aprende "como es febrero visto
+    # desde diciembre". Este pipeline entrena con todos los meses mezclados y ni
+    # siquiera sabe en que mes esta parado -- 'periodo' esta en NO_FEATURE y no hay
+    # ninguna variable de calendario.
+    #
+    # Que no es lo mismo que entrenar solo con diciembres: eso se probo en
+    # lgbm_producto (--meses diciembre) y dio 0.306, peor. Darle el mes como feature
+    # conserva todos los datos Y le dice donde esta parado. Es la version que anda:
+    # lgbm_producto, que si usa el mes, saca 0.257 con pocas features.
+    ("tgtFilter_mes",     {'solo_target': True,
+                           'mes_del_anio': True,
+                           'n_trials': 30}),
+
+    # Peso por recencia, que nunca se probo. El objetivo es 202002 y el train arranca
+    # en 201701: si el negocio cambio de regimen, los meses viejos ensucian.
+    ("tgtFilter_decay97", {'solo_target': True,
+                           'decay_recencia': 0.97,
+                           'n_trials': 30}),
+
     # ── PESO POR VOLUMEN ────────────────────────────────────────────────────
     # WAPE se mide sobre los TOTALES por producto, asi que lo dominan los de mayor
     # volumen. La perdida por fila no sabe nada de eso. Esta es la unica hipotesis
