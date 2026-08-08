@@ -104,6 +104,8 @@ Todos escriben en `exp/<nombre>/submission_202002.csv`, que es lo que `mezclar.p
 | linreg + lgbmprod_l1, 2:1 | 0.232 |
 | **trío** linreg + lgbmprod_l1 + tgtFilter, 5:1:1 / 6:1:1 / 8:1:1 / 10:2:1 / 12:2:1 | **0.229** |
 | **trío** linreg + tgtFilter + grpProducto y-delta, 6:1:1 | **0.229** |
+| **cuarteto** linreg + tgtFilter + lgbmprod_l1 + y-delta, 8:1:1:1 / 10:1:1:1 / 12:1:1:1 | **0.229** |
+| cuarteto linreg + tgtFilter + lgbmprod_l1 + y-delta, 6:1:1:1 | 0.230 |
 | trío linreg + lgbmprod_l1 + tgtFilter, 8:2:1 / 6:2:2 | 0.230 |
 | trío linreg + lgbmprod_l1 + tgtFilter, 5:2:1 / 6:3:1 / 8:3:1 | 0.231 |
 | trío linreg + tgtFilter + y-nivel 6:1:1 | 0.231 |
@@ -373,16 +375,21 @@ reindexan contra `product_id_apredecir201912.txt`.
 único que falta: las dos hipótesis que quedaban (5.3 y 5.9) se probaron y fallaron, y
 todo lo enviado después del 0.229 quedó por encima.
 
-Recomendación: **`trio_6-1-1`** (`linreg` 6 + `lgbmprod_l1` 1 + `tgtFilter` 1).
-Puntúa 0.229 igual que el par, pero reparte entre tres familias estructurales en vez
-de dos, y el hallazgo 5.4 dice que la diversidad es lo que sostiene una mezcla. Además
-es **interior** en su meseta: 5:1:1 y 8:1:1 también dan 0.229, uno de cada lado, así
-que no está apoyado en un borde — que es lo que hay que maximizar cuando el puntaje
-privado se calcula sobre otra muestra.
+Recomendación: **`cuarteto_10-1-1-1`** — `linreg` 10 + `tgtFilter` 1 + `lgbmprod_l1` 1
++ `grpProducto y-delta` 1. Dos criterios, los dos cumplidos:
 
-Si Kaggle permite marcar dos, la segunda es **`trio_dlt_611`** (0.229), que usa el
-`y-delta` como tercero en lugar de `lgbmprod_l1`: empata en público y comparte solo
-dos de los tres modelos con la primera.
+- **Cuatro familias estructurales**: OLS a nivel producto, LightGBM producto-cliente
+  con 600 features, LightGBM producto con L1, y un modelo que predice el delta. El
+  hallazgo 5.4 dice que la diversidad es lo que sostiene una mezcla.
+- **Interior en su meseta**: 8:1:1:1 y 12:1:1:1 también dan 0.229, uno de cada lado.
+  No está apoyado en un borde, que es lo que hay que maximizar cuando el puntaje
+  privado se calcula sobre otra muestra. Ojo que `8:1:1:1` *sí* está en el borde —
+  abajo de él, 6:1:1:1 cae a 0.230.
+
+Si Kaggle permite marcar dos, la segunda es **`trio_6-1-1`** (0.229).
+
+No marcar `linreg` sola aunque sea el mejor modelo individual: por el hallazgo 5.6 su
+lista de 182 productos huele a ajuste contra el leaderboard público.
 
 No marcar `linreg` sola aunque sea el mejor modelo individual: por el hallazgo 5.6 su
 lista de 182 productos huele a ajuste contra el leaderboard público.
