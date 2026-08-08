@@ -54,7 +54,12 @@ Temporary Items
 *.md
 *_files/
 __pycache__/
+# La documentacion del proyecto es markdown, asi que va exceptuada explicitamente.
+# Sin esto un .md nuevo se ignora en silencio: BITACORA.md solo sobrevive porque ya
+# estaba trackeado antes de que apareciera la regla de arriba.
 !README.md
+!BITACORA.md
+!INFORME.md
 *.ipynb_checkpoints/
 
 *copia.ipynb
