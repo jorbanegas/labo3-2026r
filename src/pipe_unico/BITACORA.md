@@ -88,6 +88,9 @@ Todos escriben en `exp/<nombre>/submission_202002.csv`, que es lo que `mezclar.p
 | `cli1de2` **regression_l1** | 0.360 |
 | `grpProducto` fillNA + **productos_train: magicos** | 0.306 |
 | `clienteProducto` fillNA + **top 50 clientes** | 0.331 |
+| `tgtFilter` + **peso_volumen raíz** | 0.272 |
+| `tgtFilter` + **peso_volumen lineal** | 0.282 |
+| `tgtFilter` + peso raíz + `regression_l1` | 0.361 |
 
 ### Mezclas
 
@@ -99,6 +102,14 @@ Todos escriben en `exp/<nombre>/submission_202002.csv`, que es lo que `mezclar.p
 | linreg + lgbmprod_l1, 3:1 | 0.231 |
 | linreg + tgtFilter 2:1 | 0.231 |
 | linreg + lgbmprod_l1, 2:1 | 0.232 |
+| **trío** linreg + lgbmprod_l1 + tgtFilter, 5:1:1 / 6:1:1 / 8:1:1 / 10:2:1 / 12:2:1 | **0.229** |
+| **trío** linreg + tgtFilter + grpProducto y-delta, 6:1:1 | **0.229** |
+| trío linreg + lgbmprod_l1 + tgtFilter, 8:2:1 / 6:2:2 | 0.230 |
+| trío linreg + lgbmprod_l1 + tgtFilter, 5:2:1 / 6:3:1 / 8:3:1 | 0.231 |
+| trío linreg + tgtFilter + y-nivel 6:1:1 | 0.231 |
+| cuarteto linreg + tgtFilter + y-nivel + y-delta 8:1:1:1 | 0.231 |
+| linreg + grpProducto y-delta, 6:1 / 4:1 | 0.232 / 0.233 |
+| linreg + y-nivel, 6:1 / 4:1 | 0.233 / 0.234 |
 | linreg + tgtFilter (50/50) | 0.237 |
 | linreg + tgtFilter_l1, 8:1 / 6:1 / 5:1 / 4:1 / 3:1 | 0.239 / 0.241 / 0.243 / 0.246 / 0.252 |
 | trío linreg 6 + lgbmprod_l1 2 + tgtFilter 1 (L2) | 0.230 |
@@ -263,6 +274,49 @@ y de ahí el 0.463.
 Junto con el hallazgo 5.3, cierra las dos hipótesis que quedaban sobre `linreg` y el
 pipeline grande. Todo lo probado después del 0.229 lo empeoró.
 
+### 5.10 Ponderar por volumen tampoco sirve, y el fracaso del L1 queda sin explicación
+
+La hipótesis viva de §5.3 era que L1 falla porque le da el mismo peso marginal a cada
+fila mientras WAPE solo mira los totales grandes. Se probó con `peso_volumen`:
+
+| Configuración | Kaggle |
+|---|---|
+| `tgtFilter` L2 sin pesos | **0.264** |
+| `tgtFilter` L2 + peso raíz | 0.272 |
+| `tgtFilter` L2 + peso lineal | 0.282 |
+| `tgtFilter` L1 sin pesos | 0.360 |
+| `tgtFilter` L1 + peso raíz | **0.361** |
+
+El renglón que importa es el último: **0.361 contra 0.360**. Si la explicación fuera
+correcta, reponderar tenía que recuperar buena parte de esos 0.096. No recuperó nada.
+
+Las dos explicaciones del fracaso del L1 están descartadas y **no hay una tercera**.
+Lo que se sabe es el hecho: `regression_l1` destruye a granularidad producto-cliente
+(+0.09) y no a nivel producto. El porqué queda abierto.
+
+De paso, el peso por volumen es monótono en su propia fuerza (0.264 → 0.272 → 0.282),
+la misma forma que Ridge/Lasso en §5.9 y que `topvol` en §5.6. Es el tercer caso en
+que empujar la pérdida hacia lo que la métrica premia empeora el resultado.
+
+### 5.11 El 0.229 es un piso, y es ancho
+
+Veintinueve entregas alrededor del óptimo, ninguna por debajo de 0.229. La meseta
+incluye el par `linreg`+`tgtFilter` a pesos 3:1–8:1 y **varios tríos**: con
+`lgbmprod_l1` a 5:1:1, 6:1:1, 8:1:1, 10:2:1 y 12:2:1, y con el `y-delta` a 6:1:1.
+
+Dos direcciones que no aportan:
+
+- **Más peso al tercer modelo empeora, monótonamente**: peso 1 → 0.229, peso 2 →
+  0.230, peso 3 → 0.231. El tercer socio no agrega, solo diluye.
+- **Cambiar el target del socio resta**. Todos los socios probados hasta acá predecían
+  `y-norm`. Los que predicen nivel o delta, mezclados con `linreg`, dan 0.232–0.234:
+  **peor que `linreg` sola** (0.231). La diversidad de target no es diversidad útil.
+
+Consecuencia práctica: como hay muchas mezclas empatadas en 0.229, conviene elegir
+**la más diversificada** entre ellas. Un trío reparte entre tres familias
+estructurales al mismo precio público que el par, y eso es lo único que todavía puede
+mover el puntaje privado.
+
 ---
 
 ## 6. Trampas operativas
@@ -319,13 +373,16 @@ reindexan contra `product_id_apredecir201912.txt`.
 único que falta: las dos hipótesis que quedaban (5.3 y 5.9) se probaron y fallaron, y
 todo lo enviado después del 0.229 quedó por encima.
 
-Recomendación: **`mezcla_5a1`**. La meseta de 0.229 va de 3:1 a 8:1 y se degrada en
-2:1 (0.231) y en 12:1 (0.230), así que el centro está cerca de 5:1 — el punto más
-lejano de los dos bordes, que es lo que hay que maximizar cuando el puntaje privado se
-calcula sobre otra muestra.
+Recomendación: **`trio_6-1-1`** (`linreg` 6 + `lgbmprod_l1` 1 + `tgtFilter` 1).
+Puntúa 0.229 igual que el par, pero reparte entre tres familias estructurales en vez
+de dos, y el hallazgo 5.4 dice que la diversidad es lo que sostiene una mezcla. Además
+es **interior** en su meseta: 5:1:1 y 8:1:1 también dan 0.229, uno de cada lado, así
+que no está apoyado en un borde — que es lo que hay que maximizar cuando el puntaje
+privado se calcula sobre otra muestra.
 
-Si Kaggle permite marcar dos, la segunda es **`mezcla_trio_l1`** (0.230): reparte entre
-tres modelos en vez de dos, así que es el hedge más diversificado disponible.
+Si Kaggle permite marcar dos, la segunda es **`trio_dlt_611`** (0.229), que usa el
+`y-delta` como tercero en lugar de `lgbmprod_l1`: empata en público y comparte solo
+dos de los tres modelos con la primera.
 
 No marcar `linreg` sola aunque sea el mejor modelo individual: por el hallazgo 5.6 su
 lista de 182 productos huele a ajuste contra el leaderboard público.
