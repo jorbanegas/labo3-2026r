@@ -16,6 +16,7 @@ Para que sobreviva a que cierres el browser:
     tail -f ~/buckets/b1/exp/cola.log
 """
 import argparse
+import atexit
 import io
 import json
 import sys
@@ -202,6 +203,24 @@ def tomar_candado(forzar: bool = False) -> None:
                      "desde": datetime.now().isoformat(timespec="seconds")}, CANDADO)
 
 
+def soltar_candado() -> None:
+    """Borra el candado al terminar.
+
+    Sin esto una cola que termina BIEN deja el archivo puesto, y la corrida siguiente
+    arranca creyendo que hay otra viva. Paso dos veces, las dos con el candado de una
+    VM que Google ya habia apagado, o sea que el aviso era siempre ruido.
+
+    Se registra con atexit y no con un finally para no reindentar main(): cubre la
+    salida normal y la excepcion no atrapada. Lo que NO cubre es que la spot muera de
+    golpe -- y ahi el candado que queda SI es informacion util, porque avisa que hubo
+    una corrida cortada a la mitad.
+    """
+    try:
+        CANDADO.unlink(missing_ok=True)
+    except OSError as e:
+        print(f"[aviso] no se pudo borrar el candado: {e}")
+
+
 def cargar_registro() -> dict:
     if REGISTRO.exists():
         try:
@@ -270,6 +289,7 @@ def main() -> None:
         return
 
     tomar_candado(args.forzar_candado)
+    atexit.register(soltar_candado)
     L.limpiar_tmp()
     pendientes = [(n, o) for n, o in COLA if not reg.get(n, {}).get("ok")]
     print(f"Cola: {len(COLA)} experimentos, {len(pendientes)} pendientes\n")
