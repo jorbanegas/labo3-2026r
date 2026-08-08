@@ -107,20 +107,39 @@ BASE = {
 # OJO al elegir el ganador: NO uses wape_test (Spearman -0.13 contra Kaggle, va al
 # reves). Subi a Kaggle y decidi con ese numero, el unico que mide lo que se evalua.
 COLA = [
-    # EL EXPERIMENTO. Replica exacta de tgtFilter (0.264, el mejor LightGBM del
-    # pipeline y el companero de mezcla del 0.229) cambiando solo la perdida. Si baja,
-    # rehacer la mezcla ponderada con linreg y deberia perforar el 0.229.
-    ("tgtFilter_l1",   {'solo_target': True, 'objective_lgbm': 'regression_l1'}),
+    # ── LA APUESTA ──────────────────────────────────────────────────────────
+    # El filtro de productos es la UNICA palanca que produjo una mejora grande en
+    # algun lado: en linreg vale 0.04 (los 780 dan 0.271, los 182 magicos dan 0.231).
+    # Nunca se transplanto al pipeline porque la palanca no existia -- solo_target
+    # filtra a los 780, no a los 182. Ahora existe ('productos_train').
+    #
+    # Va con fillNA: a nivel producto un mes sin ventas es informacion ambigua, y
+    # decirle al modelo "no se" en vez de "vendio 0" es mas honesto que a nivel
+    # cliente. La combinacion nunca se corrio.
+    ("producto_fillNA_magicos", {'agrupamiento': 'B',
+                                 'completado': 'null',
+                                 'productos_train': 'magicos'}),
 
-    # Segundo punto de medicion, sobre cli1de2 (0.267). Sirve para saber si L1 es una
-    # mejora general del pipeline o una casualidad de una configuracion. Con dos
-    # corridas apuntando igual, la conclusion aguanta; con una sola, no.
-    ("cli1de2_l1",     {'clientes_n': 2, 'objective_lgbm': 'regression_l1'}),
-
-    # Granularidad producto: la mas barata de todas y estructuralmente distinta de las
-    # dos de arriba, asi que es la mejor candidata a companera de mezcla diversa.
-    ("producto_l1",    {'agrupamiento': 'B', 'objective_lgbm': 'regression_l1'}),
+    # ── LA QUE VA CONTRA LA EVIDENCIA ───────────────────────────────────────
+    # Combinacion nueva, pero el hallazgo 5.7 apunta en contra: 'top' fue el peor
+    # experimento del pipeline (0.331) y la direccion resulto monotona -- 1 de cada 2
+    # da 0.267, 1 de cada 4 da 0.294, top 50 da 0.331. El top N cambia la POBLACION
+    # (entrena solo con clientes grandes y se evalua contra todos), y fillNA no
+    # deberia revertir una brecha de 0.064. Se corre igual: es barata y el pronostico
+    # puede estar equivocado, que es exactamente lo que paso con lo del L1.
+    #
+    # n_trials mas bajo que la BASE a proposito: va segunda y quedan ~13 horas de
+    # competencia. Vale mas que las dos terminen a que la primera use todo el tiempo.
+    ("cliTop50_fillNA",         {'completado': 'null',
+                                 'filtro_clientes': 'top',
+                                 'clientes_n': 50,
+                                 'n_trials': 25}),
 ]
+
+# Tanda anterior (regression_l1), ya corrida y registrada: tgtFilter_l1 0.360,
+# cli1de2_l1 0.360, producto_l1 0.290, contra 0.264 / 0.267 / 0.271 de sus gemelas
+# L2. Quedan fuera de la lista para no confundir el --listar; el registro las
+# saltearia igual.
 
 # ── LO QUE NO ESTA ACA Y POR QUE ─────────────────────────────────────────────
 # 'semillas_ensemble' NO entra en el nombre del experimento (ver la celda 3 del
