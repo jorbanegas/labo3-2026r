@@ -33,10 +33,11 @@ sesión nueva sin tener que reconstruir nada.
 Es una **meseta, no un punto**: cuatro pesos distintos dan el mismo 0.229, lo que hace
 más probable que se sostenga en el puntaje privado.
 
-Sigue en pie después de dos tandas de experimentos que apuntaban a superarlo
-(`regression_l1` en el pipeline grande y regularización sobre `linreg`, §5.3 y §5.9).
-Las dos fallaron de forma monótona, sin óptimo interior: no quedó ninguna dirección
-prometedora a medio explorar.
+Sigue en pie después de tres tandas que apuntaban a superarlo: `regression_l1` en el
+pipeline grande (§5.3), regularización sobre `linreg` (§5.9), y el transplante del
+filtro de productos mágicos al LightGBM más top 50 clientes con `fillNA` (§5.6, §5.7).
+Las tres fallaron, y las dos primeras de forma monótona y sin óptimo interior. No
+quedó ninguna dirección prometedora a medio explorar.
 
 ---
 
@@ -85,6 +86,8 @@ Todos escriben en `exp/<nombre>/submission_202002.csv`, que es lo que `mezclar.p
 | `grpProducto` **regression_l1** | 0.290 |
 | `tgtFilter` **regression_l1** | 0.360 |
 | `cli1de2` **regression_l1** | 0.360 |
+| `grpProducto` fillNA + **productos_train: magicos** | 0.306 |
+| `clienteProducto` fillNA + **top 50 clientes** | 0.331 |
 
 ### Mezclas
 
@@ -217,6 +220,14 @@ Ni volumen, ni regularidad, ni cantidad lo explican. **Probablemente la lista fu
 ajustada contra el leaderboard público**, lo que implica riesgo de que ese 0.231 se
 degrade en el privado. Argumento a favor de entregar una mezcla y no `linreg` sola.
 
+**Y no transfiere a otro modelo.** Se agregó la palanca `productos_train: 'magicos'`
+al pipeline para entrenar el LightGBM con esos mismos 182 productos: dio **0.306**,
+peor que entrenar con todos. El efecto es específico del modelo, no una propiedad de
+los productos. En un OLS de 13 parámetros esas 182 filas *son* el dataset y sacar las
+series erráticas evita que los outliers corran los coeficientes; en LightGBM,
+restringir a 182 productos tira el grueso de la señal de entrenamiento de un modelo
+que necesita datos.
+
 ### 5.7 Top 50 clientes: cambio de población, no muestreo
 
 `filtro_clientes: 'top'` fue el peor experimento del pipeline (0.331). El muestreo por
@@ -224,6 +235,10 @@ hash toma un subconjunto **representativo**; el top N **cambia la población**: 
 solo con clientes grandes pero se evalúa contra todos, incluidos los chicos que nunca
 vio. La dirección de clientes fue monótona: 1 de cada 2 → 0.267, 1 de cada 4 → 0.294,
 top 50 → 0.331.
+
+Confirmado después: top 50 con `fillNA` en vez de `fill0` dio **0.331 otra vez**,
+idéntico hasta el tercer decimal. Cuando la población de entrenamiento no es la que se
+evalúa, ese error domina y ninguna otra palanca se nota.
 
 ### 5.8 Normalización: solo `recta`
 
