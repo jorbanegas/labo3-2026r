@@ -77,6 +77,9 @@ Todos escriben en `exp/<nombre>/submission_202002.csv`, que es lo que `mezclar.p
 | `linreg` topvol 300 / 182 / 100 / 50 | 0.312 / 0.400 / 0.584 / 0.757 |
 | LightGBM `clientes_top50` | 0.331 |
 | LightGBM `norm_zscore` | 4.6e9 (roto) |
+| `grpProducto` **regression_l1** | 0.290 |
+| `tgtFilter` **regression_l1** | 0.360 |
+| `cli1de2` **regression_l1** | 0.360 |
 
 ### Mezclas
 
@@ -89,6 +92,9 @@ Todos escriben en `exp/<nombre>/submission_202002.csv`, que es lo que `mezclar.p
 | linreg + tgtFilter 2:1 | 0.231 |
 | linreg + lgbmprod_l1, 2:1 | 0.232 |
 | linreg + tgtFilter (50/50) | 0.237 |
+| linreg + tgtFilter_l1, 8:1 / 6:1 / 5:1 / 4:1 / 3:1 | 0.239 / 0.241 / 0.243 / 0.246 / 0.252 |
+| trío linreg 6 + lgbmprod_l1 2 + tgtFilter 1 (L2) | 0.230 |
+| trío linreg 6 + lgbmprod_l1 2 + tgtFilter_l1 1 | 0.239 |
 | linreg + tgtFilter + cli1de2 (50/50/50) | 0.244 |
 | 3 LightGBM (tgtFilter + cli1de2 + producto) | 0.256 |
 | 4 LightGBM | 0.258 |
@@ -129,15 +135,38 @@ Es la única dirección con señal consistente en toda la sesión.
 - Agregar features (`--extras`) empeoró: 0.275 → 0.283.
 - Pero tiene un piso: 4 hojas subajusta (0.287). El óptimo estuvo en 8.
 
-### 5.3 `regression_l1` en vez de `regression`
+### 5.3 `regression_l1` ayuda a nivel producto y destruye a nivel producto-cliente
 
-WAPE es error **absoluto**; `regression` minimiza error **cuadrático**. Cambiar a
-`regression_l1` dio **0.018** en `lgbm_producto` (0.275 → 0.257).
+WAPE es error **absoluto** y `regression` minimiza error **cuadrático**, así que
+cambiar a `regression_l1` parecía la corrección obvia. Dio **0.018** de mejora en
+`lgbm_producto` (0.275 → 0.257) y se probó en el pipeline grande. **Fracasó, y el
+daño crece con la granularidad:**
 
-**Todos los experimentos del pipeline grande usaron `regression`.** Es la hipótesis
-pendiente más prometedora: podría mover hacia abajo el rango 0.264–0.299 completo en el
-que se amontonaron todos los experimentos, y explicaría por qué ninguna otra palanca
-movía nada.
+| Experimento | Granularidad | L2 | L1 | Δ |
+|---|---|---|---|---|
+| `tgtFilter` | producto-cliente | 0.264 | 0.360 | **+0.096** |
+| `cli1de2` | producto-cliente | 0.267 | 0.360 | **+0.093** |
+| `grpProducto` | producto | 0.271 | 0.290 | +0.019 |
+| `lgbm_producto` | producto | 0.275 | 0.257 | −0.018 |
+
+El barrido de mezclas lo confirma: es monótono (3:1 → 0.252 … 8:1 → 0.239),
+convergiendo hacia `linreg` sola desde arriba. El socio L1 resta con cualquier peso.
+
+**Primera explicación, descartada:** que L1 ajusta la mediana condicional, que con
+demanda intermitente es 0 en la mayoría de las celdas producto-cliente, y que al sumar
+sobre clientes eso subestimaría el total. Se midió y es falso — el L1 predice **más**
+tonelaje que el L2 (30.441 contra 28.308).
+
+**Explicación que queda en pie, sin confirmar:** WAPE se mide sobre los **totales por
+producto**, así que lo dominan los productos de mayor volumen. L1 le da el mismo peso
+marginal a cada fila, y a nivel producto-cliente hay millones de celdas chicas que
+ahogan a las pocas grandes; L2, al castigar el error al cuadrado, atiende justo a las
+filas grandes. A nivel producto ese desbalance casi no existe, y ahí L1 empata o gana.
+Se testearía ponderando el entrenamiento por volumen del producto (ver §8).
+
+**La lección transferible**: alinear la pérdida con la métrica solo vale si el modelo
+predice en la misma unidad en que se evalúa. Si entre la predicción y la métrica hay
+una agregación, la pérdida por fila y la métrica agregada son cosas distintas.
 
 ### 5.4 Mezclar: pocos, buenos y sobre todo DIVERSOS
 
@@ -237,21 +266,13 @@ reindexan contra `product_id_apredecir201912.txt`.
 
 ## 7. Pendiente
 
-1. **Correr la cola de `regression_l1`.** `cola.py` quedó reescrita con tres
-   experimentos, cada uno una réplica de una corrida con puntaje conocido cambiando
-   solo la pérdida: `tgtFilter_l1` (contra 0.264), `cli1de2_l1` (contra 0.267) y
-   `producto_l1`. Reusan los parquets de preprocesamiento y FE, así que arrancan
-   directo en Optuna. **Es lo más prometedor que queda.**
-
-   La `BASE` volvió al split de los defaults del notebook (val `201907-201908`). La
-   validación de 6 meses se sacó: se justificaba en que `wape_val` no predecía
-   `wape_test`, pero el hallazgo 5.1 mostró que `wape_test` tampoco predice Kaggle,
-   así que ese argumento se quedó sin evidencia — y moverla al mismo tiempo que la
-   pérdida haría imposible atribuir la mejora.
-2. `mezcla_trio_l1.csv` (linreg 6 + lgbmprod_l1 2 + tgtFilter 1) quedó generada sin subir.
-3. Si `tgtFilter_l1` baja de 0.264, **rehacer la mezcla ponderada** contra `linreg`
-   barriendo pesos 3:1 a 8:1, que es la meseta donde vive el 0.229.
-4. **Marcar la entrega final** con el checkbox *Select* de Kaggle antes del cierre.
+1. **Ridge / Lasso sobre `linreg`.** `linreg.py` tiene ahora `--reg ridge|lasso` y
+   `--alpha`. Es la idea con mejor relación costo-beneficio que queda: `linreg` es el
+   modelo individual más fuerte (0.231), son 13 parámetros sobre 182 filas con 12
+   features fuertemente correlacionadas entre sí (lags de la misma serie), y cada
+   corrida tarda segundos. Grillas útiles: Ridge 3–1000, Lasso 0.01–0.3 (sklearn
+   divide el error por `n` en Lasso y no en Ridge, por eso las escalas difieren).
+2. **Marcar la entrega final** con el checkbox *Select* de Kaggle antes del cierre.
    Recomendación: `mezcla_4a1` (o cualquiera de la meseta 3:1–8:1), no `linreg` sola,
    por el riesgo del hallazgo 5.6.
 
@@ -263,10 +284,10 @@ nada; si alguna vez corta, conviene subir a mano lo que importa primero.
 
 ## 8. Ideas no exploradas
 
-- Ridge o Lasso en vez de OLS en `linreg`: con 13 parámetros y 182 filas, regularizar
-  podría ganar algo.
 - Transformación logarítmica de `tn` antes de ajustar (las ventas son lognormales).
-- Ponderar el entrenamiento por volumen del producto, para alinear la pérdida con el
-  denominador del WAPE.
+- **Ponderar el entrenamiento por volumen del producto**, para alinear la pérdida con
+  el denominador del WAPE. Subió de prioridad: es el test de la explicación que quedó
+  viva en el hallazgo 5.3. Requiere tocar el notebook (`entrenar()` ya acepta
+  `sample_weight`, hoy solo lo usa `decay_recencia`) y una corrida completa de Optuna.
 - Un modelo específico para los productos que hoy caen en el respaldo por promedio
   (los que no tienen 12 meses de historia).

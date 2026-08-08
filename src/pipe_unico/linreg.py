@@ -21,6 +21,7 @@ entrena con todos los meses mezclados y ni siquiera sabe en que mes esta parado.
     python linreg.py --productos todos      # entrenar con los 780, no con los 182
     python linreg.py --meses 201812,201712  # dos diciembres de entrenamiento
     python linreg.py --lags 6
+    python linreg.py --reg ridge --alpha 10 # encoger los coeficientes
 
 Escribe exp/<nombre>/submission_202002.csv, listo para mezclar.py y para subir.
 """
@@ -77,10 +78,12 @@ def main() -> None:
     ap.add_argument("--horizonte", type=int, default=2)
     ap.add_argument("--origen", type=int, default=201912,
                     help="periodo desde el que se predice")
+    ap.add_argument("--reg", choices=["ols", "ridge", "lasso"], default="ols",
+                    help="ols = la version de la catedra (sin regularizacion)")
+    ap.add_argument("--alpha", type=float, default=1.0,
+                    help="fuerza de la regularizacion (solo con --reg ridge|lasso)")
     ap.add_argument("--nombre", default=None, help="carpeta de salida dentro de exp/")
     args = ap.parse_args()
-
-    import statsmodels.api as sm
 
     meses_tr = [int(x) for x in args.meses.split(",")]
 
@@ -121,14 +124,13 @@ def main() -> None:
     print(f"Entrenamiento: {dtrain.height} filas  (meses {meses_tr}, "
           f"productos '{args.productos}')")
 
-    X = sm.add_constant(dtrain.select(campos).to_pandas())
-    modelo = sm.OLS(dtrain["clase"].to_pandas(), X).fit()
-    print(f"R2 = {modelo.rsquared:.4f}   R2 ajustado = {modelo.rsquared_adj:.4f}")
+    predecir = ajustar(dtrain.select(campos).to_pandas(), dtrain["clase"].to_pandas(),
+                       args.reg, args.alpha)
 
     # ── 4. Prediccion desde el origen, solo donde hay historia completa ──────
     dfuture = tabla.filter(pl.col("periodo") == args.origen).drop_nulls(campos)
-    pred = modelo.predict(sm.add_constant(dfuture.select(campos).to_pandas()))
-    reg = dfuture.select("product_id").with_columns(pl.Series("tn_pred", pred.values))
+    pred = predecir(dfuture.select(campos).to_pandas())
+    reg = dfuture.select("product_id").with_columns(pl.Series("tn_pred", pred))
     print(f"Prediccion por regresion: {reg.height} productos")
 
     # ── 5. Respaldo para los que no tienen historia completa ────────────────
@@ -150,8 +152,13 @@ def main() -> None:
         raise SystemExit(f"{final.height} filas contra {oficial.height} oficiales")
 
     _suf = f"{args.n}" if args.productos in ("topvol","estables") else ""
+    # El tag de regularizacion se omite con 'ols' a proposito: asi la corrida de la
+    # catedra conserva el nombre que ya tiene en exp/ (y en las mezclas) y no aparece
+    # duplicada. Con ridge/lasso el alpha entra en el nombre, porque dos alphas
+    # distintos son dos modelos distintos y no pueden pisarse la carpeta.
+    _tag_reg = "" if args.reg == "ols" else f"_{args.reg}{args.alpha:g}"
     nombre = args.nombre or (f"linreg_{args.productos}{_suf}_{args.lags}lags_"
-                             + "-".join(str(m) for m in meses_tr))
+                             + "-".join(str(m) for m in meses_tr) + _tag_reg)
     dst = L.RUTA_EXP / nombre
     dst.mkdir(parents=True, exist_ok=True)
     path = dst / "submission_202002.csv"
@@ -161,6 +168,55 @@ def main() -> None:
     print(f"Guardado: {path}")
     print("\nPara subirlo:\n")
     print(f"kaggle competitions submit -c labo-iii-2026-rosario -f {path} -m \"{nombre}\"")
+
+
+def ajustar(X, y, metodo: str, alpha: float):
+    """Ajusta el modelo y devuelve una funcion que predice sobre un DataFrame igual.
+
+    'ols' es la version de la catedra y no cambia en nada: statsmodels, sin penalizar.
+
+    Por que regularizar puede pagar aca: son 13 parametros sobre 182 filas, y las 12
+    features son lags de la misma serie, o sea que estan fuertemente correlacionadas
+    entre si. Ese es el regimen clasico de varianza alta en OLS -- coeficientes grandes
+    y de signos alternados que se cancelan en train y no generalizan.
+
+    Ridge y Lasso se ajustan sobre variables ESTANDARIZADAS, y tambien se estandariza
+    la clase. Sin eso alpha no significaria nada: las features son toneladas, el termino
+    de error va en toneladas al cuadrado y aplasta cualquier penalizacion de magnitud
+    razonable, con lo que alpha=1 y alpha=100 devolverian los mismos coeficientes que
+    OLS. Estandarizando, la grilla de alphas es interpretable y comparable entre
+    corridas. El intercepto nunca se penaliza (fit_intercept=True).
+    """
+    import numpy as np
+
+    if metodo == "ols":
+        import statsmodels.api as sm
+        modelo = sm.OLS(y, sm.add_constant(X)).fit()
+        print(f"R2 = {modelo.rsquared:.4f}   R2 ajustado = {modelo.rsquared_adj:.4f}")
+        return lambda Xn: np.asarray(modelo.predict(sm.add_constant(Xn)))
+
+    from sklearn.linear_model import Lasso, Ridge
+
+    # Desvio 0 (una columna constante) dividiria por cero: se deja en 1, que equivale
+    # a no escalar esa columna. Su coeficiente queda absorbido por el intercepto.
+    mx = X.mean()
+    sx = X.std(ddof=0).replace(0.0, 1.0)
+    my = float(y.mean())
+    sy = float(y.std(ddof=0))
+    if sy == 0.0:
+        sy = 1.0
+
+    est = (Ridge if metodo == "ridge" else Lasso)(alpha=alpha, fit_intercept=True)
+    est.fit((X - mx) / sx, (y - my) / sy)
+
+    _nz = int((est.coef_ != 0).sum())
+    print(f"{metodo} alpha={alpha:g}   coeficientes no nulos: {_nz}/{len(est.coef_)}"
+          f"   |w| medio {np.abs(est.coef_).mean():.4f}")
+
+    def _predecir(Xn):
+        return np.asarray(est.predict((Xn - mx) / sx)) * sy + my
+
+    return _predecir
 
 
 def seleccionar_productos(ventas, criterio: str, n: int, origen: int):
