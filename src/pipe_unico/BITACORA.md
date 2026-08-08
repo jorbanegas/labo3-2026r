@@ -33,6 +33,11 @@ sesión nueva sin tener que reconstruir nada.
 Es una **meseta, no un punto**: cuatro pesos distintos dan el mismo 0.229, lo que hace
 más probable que se sostenga en el puntaje privado.
 
+Sigue en pie después de dos tandas de experimentos que apuntaban a superarlo
+(`regression_l1` en el pipeline grande y regularización sobre `linreg`, §5.3 y §5.9).
+Las dos fallaron de forma monótona, sin óptimo interior: no quedó ninguna dirección
+prometedora a medio explorar.
+
 ---
 
 ## 3. Herramientas — `src/pipe_unico/`
@@ -103,6 +108,16 @@ Todos escriben en `exp/<nombre>/submission_202002.csv`, que es lo que `mezclar.p
 | mediana de 14 | 0.286 |
 | media de 14 (con zscore adentro) | 1.6e10 |
 
+### Barrido de regularización en `linreg` (magicos, 12 lags, 201812)
+
+| Ridge α | 0 (OLS) | 3 | 10 | 30 | 100 | 300 | 1000 |
+|---|---|---|---|---|---|---|---|
+| Kaggle | **0.231** | 0.242 | 0.249 | 0.258 | 0.273 | 0.310 | 0.463 |
+
+| Lasso α | 0 (OLS) | 0.01 | 0.03 | 0.1 | 0.3 |
+|---|---|---|---|---|---|
+| Kaggle | **0.231** | 0.243 | 0.248 | 0.274 | 0.408 |
+
 ### Barrido de lags en `linreg` (magicos, 201812)
 
 | Lags | 6 | 9 | **12** | 15 | 18 | 24 |
@@ -125,15 +140,18 @@ La causa estructural: el modelo final entrena con *todos* los meses y predice 20
 mientras que el test mide un modelo entrenado con menos datos prediciendo 201910. Son
 regímenes distintos.
 
-### 5.2 Menos capacidad gana
-
-Es la única dirección con señal consistente en toda la sesión.
+### 5.2 Menos capacidad gana, pero solo cambiando de clase de modelo
 
 - OLS de 13 parámetros sobre 182 filas (0.231) le gana a LightGBM con 600 features
   (0.264) y a LightGBM sobre **los mismos datos** (0.306 con `--meses diciembre`).
 - Reducir hojas de 31 a 8 en `lgbm_producto`: 0.275 → 0.257.
 - Agregar features (`--extras`) empeoró: 0.275 → 0.283.
 - Pero tiene un piso: 4 hojas subajusta (0.287). El óptimo estuvo en 8.
+
+**Ojo con generalizarlo**: encoger los coeficientes *dentro* de la clase de modelo no
+es lo mismo que elegir una clase más chica, y el hallazgo 5.9 muestra que lo primero
+solo destruye. Lo que gana es menos features y mejor alineación estacional, no
+restringir el ajuste.
 
 ### 5.3 `regression_l1` ayuda a nivel producto y destruye a nivel producto-cliente
 
@@ -214,6 +232,22 @@ demanda intermitente, series casi constantes dan desvíos de ~1e-9 y el target s
 ~1e9, envenenando el entrenamiento entero. `zscore` dio WAPE de 4.6e9. `recta` es
 sustractiva y por eso es la única segura.
 
+### 5.9 Regularizar `linreg` solo empeora — no había sobreajuste que corregir
+
+Diez alphas, dos familias de penalización, **monótono en ambas y sin óptimo interior**:
+Ridge 3 → 0.242 hasta 1000 → 0.463; Lasso 0.01 → 0.243 hasta 0.3 → 0.408. Las dos
+curvas extrapolan a 0.231 (OLS) cuando α→0.
+
+Era la apuesta razonable — 13 parámetros sobre 182 filas, con 12 features que son lags
+correlacionados de la misma serie — y la respuesta fue que **el ajuste no estaba
+limitado por varianza**. Con la clase estandarizada, α grande colapsa las predicciones
+hacia la media del target de entrenamiento (los 182 mágicos en 201812); predecir esa
+media para todos es pésimo en una métrica dominada por los productos de mayor volumen,
+y de ahí el 0.463.
+
+Junto con el hallazgo 5.3, cierra las dos hipótesis que quedaban sobre `linreg` y el
+pipeline grande. Todo lo probado después del 0.229 lo empeoró.
+
 ---
 
 ## 6. Trampas operativas
@@ -266,15 +300,20 @@ reindexan contra `product_id_apredecir201912.txt`.
 
 ## 7. Pendiente
 
-1. **Ridge / Lasso sobre `linreg`.** `linreg.py` tiene ahora `--reg ridge|lasso` y
-   `--alpha`. Es la idea con mejor relación costo-beneficio que queda: `linreg` es el
-   modelo individual más fuerte (0.231), son 13 parámetros sobre 182 filas con 12
-   features fuertemente correlacionadas entre sí (lags de la misma serie), y cada
-   corrida tarda segundos. Grillas útiles: Ridge 3–1000, Lasso 0.01–0.3 (sklearn
-   divide el error por `n` en Lasso y no en Ridge, por eso las escalas difieren).
-2. **Marcar la entrega final** con el checkbox *Select* de Kaggle antes del cierre.
-   Recomendación: `mezcla_4a1` (o cualquiera de la meseta 3:1–8:1), no `linreg` sola,
-   por el riesgo del hallazgo 5.6.
+**Marcar la entrega final** con el checkbox *Select* de Kaggle antes del cierre. Es lo
+único que falta: las dos hipótesis que quedaban (5.3 y 5.9) se probaron y fallaron, y
+todo lo enviado después del 0.229 quedó por encima.
+
+Recomendación: **`mezcla_5a1`**. La meseta de 0.229 va de 3:1 a 8:1 y se degrada en
+2:1 (0.231) y en 12:1 (0.230), así que el centro está cerca de 5:1 — el punto más
+lejano de los dos bordes, que es lo que hay que maximizar cuando el puntaje privado se
+calcula sobre otra muestra.
+
+Si Kaggle permite marcar dos, la segunda es **`mezcla_trio_l1`** (0.230): reparte entre
+tres modelos en vez de dos, así que es el hedge más diversificado disponible.
+
+No marcar `linreg` sola aunque sea el mejor modelo individual: por el hallazgo 5.6 su
+lista de 182 productos huele a ajuste contra el leaderboard público.
 
 Nota sobre `subir.py`: ordena los envíos por `wape_test`, que según el hallazgo 5.1
 es levemente peor que al azar. Mientras el límite diario no corte, el orden no cambia
