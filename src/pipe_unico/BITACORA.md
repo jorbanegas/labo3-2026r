@@ -33,11 +33,19 @@ sesión nueva sin tener que reconstruir nada.
 Es una **meseta, no un punto**: cuatro pesos distintos dan el mismo 0.229, lo que hace
 más probable que se sostenga en el puntaje privado.
 
-Sigue en pie después de tres tandas que apuntaban a superarlo: `regression_l1` en el
-pipeline grande (§5.3), regularización sobre `linreg` (§5.9), y el transplante del
-filtro de productos mágicos al LightGBM más top 50 clientes con `fillNA` (§5.6, §5.7).
-Las tres fallaron, y las dos primeras de forma monótona y sin óptimo interior. No
-quedó ninguna dirección prometedora a medio explorar.
+Sigue en pie después de **cinco tandas** que apuntaban a superarlo, todas fallidas:
+
+| Hipótesis | Resultado | Dónde |
+|---|---|---|
+| `regression_l1` (alinear la pérdida con la métrica) | 0.264 → 0.360 | §5.3 |
+| Ridge / Lasso sobre `linreg` | monótono, 0.231 → 0.463 | §5.9 |
+| Filtro de productos mágicos en LightGBM | 0.306 | §5.11 |
+| Ponderar el entrenamiento por volumen | monótono, 0.264 → 0.282 | §5.10 |
+| Mes del año como feature | 0.264 → 0.279 | §5.11 |
+
+Tres de las cinco fallaron de forma **monótona y sin óptimo interior**, que es la
+manera menos ambigua de fallar: no era cuestión de afinar un parámetro. Y treinta y
+tres mezclas alrededor del óptimo no bajaron de 0.229.
 
 ---
 
@@ -91,6 +99,7 @@ Todos escriben en `exp/<nombre>/submission_202002.csv`, que es lo que `mezclar.p
 | `tgtFilter` + **peso_volumen raíz** | 0.272 |
 | `tgtFilter` + **peso_volumen lineal** | 0.282 |
 | `tgtFilter` + peso raíz + `regression_l1` | 0.361 |
+| `tgtFilter` + **mes del año como feature** | 0.279 |
 
 ### Mezclas
 
@@ -300,7 +309,32 @@ De paso, el peso por volumen es monótono en su propia fuerza (0.264 → 0.272 �
 la misma forma que Ridge/Lasso en §5.9 y que `topvol` en §5.6. Es el tercer caso en
 que empujar la pérdida hacia lo que la métrica premia empeora el resultado.
 
-### 5.11 El 0.229 es un piso, y es ancho
+### 5.11 Lo que hace andar a `linreg` no se pudo transplantar
+
+`linreg` (0.231) le gana a todo el pipeline (0.264) y sus dos diferencias
+estructurales más claras están documentadas en su propio docstring. Se aislaron las
+dos y se probaron en el LightGBM. **Ninguna transfiere:**
+
+| Pieza de `linreg` | Cómo se probó | Kaggle | vs base |
+|---|---|---|---|
+| Entrena solo con los 182 productos mágicos | `productos_train: 'magicos'` | 0.306 | peor |
+| Sabe en qué mes del calendario está | `mes_del_anio: True` | 0.279 | 0.264 → peor |
+
+El mes es el caso más nítido: el pipeline entrena con todos los meses mezclados y
+`periodo` está en `NO_FEATURE`, así que literalmente no sabe dónde está parado,
+mientras `linreg` entrena con una sola fila por producto del 201812 — "cómo es febrero
+visto desde diciembre". Parecía la explicación. Dársela al modelo lo empeora en 0.015.
+
+Tampoco es que la alineación estacional sea mala en sí: `lgbm_producto --meses
+diciembre` (que es la versión extrema, entrenar *solo* con diciembres) dio 0.306.
+
+Queda como hecho sin explicación, igual que §5.10: el modelo chico gana, y ninguna de
+sus partes identificables es la razón. La hipótesis que sobrevive, sin poder testearse
+en el tiempo disponible, es que lo que gana no es una pieza sino el conjunto — 13
+parámetros sobre 182 filas es un régimen tan distinto de 600 features sobre millones
+de filas que las piezas no significan lo mismo en los dos lados.
+
+### 5.12 El 0.229 es un piso, y es ancho
 
 Veintinueve entregas alrededor del óptimo, ninguna por debajo de 0.229. La meseta
 incluye el par `linreg`+`tgtFilter` a pesos 3:1–8:1 y **varios tríos**: con
